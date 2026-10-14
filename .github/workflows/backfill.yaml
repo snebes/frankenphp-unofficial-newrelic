@@ -1,0 +1,97 @@
+name: Backfill PHP version
+
+on:
+  workflow_dispatch:
+    inputs:
+      php-version:
+        description: PHP minor version to add to existing releases (e.g. 8.6)
+        required: true
+      tags:
+        description: Release tags to backfill, space or comma separated, or "all"
+        required: true
+        default: all
+      php-image-variant:
+        description: Official PHP image variant; use -rc to build against a release candidate
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  releases:
+    name: Select releases
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.select.outputs.tags }}
+    steps:
+      - id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -euo pipefail
+          if [[ "${TAGS}" == "all" ]]; then
+            tags="$(gh release list --repo "${{ github.repository }}" --exclude-drafts --limit 200 \
+              --json tagName --jq '[.[].tagName]')"
+          else
+            tags="$(jq -cn --arg t "${TAGS}" '$t | [splits("[ ,]+")] | map(select(length > 0))')"
+          fi
+          if [[ "$(jq length <<< "${tags}")" -eq 0 ]]; then
+            echo "::error::No releases selected"
+            exit 1
+          fi
+          echo "Backfilling PHP ${{ inputs.php-version }} for: ${tags}"
+          echo "tags=${tags}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: ${{ matrix.tag }}
+    needs: releases
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        tag: ${{ fromJSON(needs.releases.outputs.tags) }}
+    uses: ./.github/workflows/build.yaml
+    with:
+      agent-version: ${{ matrix.tag }}
+      asset-version: ${{ matrix.tag }}
+      php-versions: ${{ format('["{0}"]', inputs.php-version) }}
+      php-image-variant: ${{ inputs.php-image-variant }}
+      pin-from-release: true
+
+  publish:
+    name: Upload release assets
+    needs: build
+    # Releases that built successfully are published even if others failed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: php_newrelic-*
+          merge-multiple: true
+          path: dist
+
+      - name: Upload to releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(dist/*.zip)
+          if [[ ${#assets[@]} -eq 0 ]]; then
+            echo "::error::No assets were built"
+            exit 1
+          fi
+          for asset in "${assets[@]}"; do
+            # php_newrelic-<tag>_php<X.Y>-<arch>-linux-glibc-zts.zip
+            tag="$(basename "${asset}")"
+            tag="${tag#php_newrelic-}"
+            tag="${tag%%_php*}"
+            echo "Uploading $(basename "${asset}") to ${tag}"
+            gh release upload "${tag}" "${asset}" --clobber --repo "${{ github.repository }}"
+          done
