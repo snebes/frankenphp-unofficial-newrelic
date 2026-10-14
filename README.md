@@ -1,10 +1,10 @@
 # frankenphp-unofficial-newrelic
 
-Unofficial multi-arch Docker images that ship the **New Relic PHP agent built with ZTS (Zend Thread Safety)** so it can run on **FrankenPHP** and other thread-safe PHP stacks. Images are published for tags that track [`dunglas/frankenphp`](https://hub.docker.com/r/dunglas/frankenphp) on Docker Hub (for example `1-php8.4`, `1.2-php8.3-bookworm`).
+Unofficial pre-built **New Relic PHP agent extension built with ZTS (Zend Thread Safety)** so it can run on **FrankenPHP** and other thread-safe PHP stacks, installable with [PIE](https://github.com/php/pie).
 
 ## Why this exists
 
-The stock New Relic PHP agent targets NTS (non-thread-safe) PHP. **FrankenPHP** uses a ZTS PHP build, so you need an agent and extension compiled accordingly. This repository automates building and publishing those artifacts as Docker images.
+The stock New Relic PHP agent targets NTS (non-thread-safe) PHP. **FrankenPHP** uses a ZTS PHP build, so you need an extension compiled accordingly. This repository automates building and publishing that extension.
 
 ## Agent source (credit)
 
@@ -12,38 +12,35 @@ The ZTS-capable agent sources come from **[Théophile Diot](https://github.com/t
 
 **[theophileds/newrelic-php-agent-zts](https://github.com/theophileds/newrelic-php-agent-zts) — branch [`zts-support`](https://github.com/theophileds/newrelic-php-agent-zts/tree/zts-support)**
 
-The [`prepare`](.github/workflows/prepare.yaml) workflow checks out that branch, merges in the current [`newrelic/newrelic-php-agent`](https://github.com/newrelic/newrelic-php-agent) `main`, and uses the result as the build context. Thanks to Théophile for maintaining the ZTS work this project relies on.
+Thanks to Théophile for maintaining the ZTS work this project relies on.
 
-## What gets built
+## Installing with PIE
 
-[`Dockerfile.zts-build`](Dockerfile.zts-build) compiles the Go **newrelic-daemon** and the **PHP extension** (`newrelic.so`) against the FrankenPHP base image you select. The CI build targets **`linux/amd64`**, **`linux/arm64`**, **`linux/arm/v7`**, and **`linux/386`** and pushes a manifest to Docker Hub.
+Pre-built binaries are published for ZTS PHP 8.2–8.5 on Linux glibc (`x86_64`, `arm64`):
 
-The `package` stage is **`FROM scratch`** and contains only `newrelic.so` and `newrelic-daemon` for extraction or multi-stage copies into your own images.
+```shell
+pie install snebes/newrelic-zts
+```
 
-## CI overview
+PIE only installs `newrelic.so`; it cannot build this extension from source. The **daemon is not included** — install New Relic's official `newrelic-daemon` package and point `newrelic.daemon.location` at it. Configure New Relic as usual (license key, app name, `newrelic.ini`, etc.).
 
-| Workflow | Role |
-| -------- | ---- |
-| [`sync.yaml`](.github/workflows/sync.yaml) | On a schedule (and manual dispatch): discovers matching tags from `dunglas/frankenphp`, skips tags already present on this project’s Docker Hub repo, then builds and pushes the rest. |
-| [`matrix.yaml`](.github/workflows/matrix.yaml) | Scheduled (and manual) builds for a fixed matrix of FrankenPHP-style tags. |
-| [`adhoc.yaml`](.github/workflows/adhoc.yaml) | Build and push a **single** tag you choose. |
+## How it is built
 
-Reusable pieces: [`prepare.yaml`](.github/workflows/prepare.yaml) (checkout + merge + artifact), [`build.yaml`](.github/workflows/build.yaml) (buildx + push).
+[`Dockerfile.zts-build`](Dockerfile.zts-build) compiles `newrelic.so` inside the official `php:<X.Y>-zts-bookworm` image (the same base FrankenPHP uses), with PCRE linked statically. The resulting extension only depends on libc.
 
-### GitHub configuration
+To build locally, run from a checkout of the agent fork:
 
-Publishing requires a Docker Hub **username** in repository **Variables** (`DOCKERHUB_USERNAME`) and a **token** in **Secrets** (`DOCKERHUB_TOKEN`), as referenced in [`build.yaml`](.github/workflows/build.yaml).
+```shell
+docker build . -f /path/to/Dockerfile.zts-build --target package \
+  --build-arg PHP_VERSION=8.4 --output type=local,dest=out
+```
 
-## Using the images
+## Publishing a release
 
-Set your image to:
-
-`YOUR_DOCKERHUB_USERNAME/frankenphp-unofficial-newrelic:<frankenphp-tag>`
-
-where `<frankenphp-tag>` matches the upstream FrankenPHP tag you run (e.g. `1-php8.4`). Configure New Relic as usual (license key, app name, `newrelic.ini`, etc.).
-
-To build locally from a clone with the agent tree present, see the comments at the top of [`Dockerfile.zts-build`](Dockerfile.zts-build).
+1. Create and publish a GitHub release (e.g. tag `v1.0.0`).
+2. [`release.yaml`](.github/workflows/release.yaml) builds each PHP version × architecture from the current `zts-support` commit and attaches assets named `php_newrelic-<tag>_php<X.Y>-<arch>-linux-glibc-zts.zip`. It can be re-run for an existing tag via manual dispatch.
+3. Packagist picks up the new tag automatically once the repository is [submitted](https://packagist.org/packages/submit) and the GitHub hook is enabled.
 
 ## License
 
-This repository is licensed under the MIT License — see [`LICENSE`](LICENSE). The New Relic agent and related upstream code remain under their respective licenses.
+This repository is licensed under the MIT License — see [`LICENSE`](LICENSE). The New Relic agent is licensed under Apache-2.0; its license and third-party notices are included in each release asset.

@@ -1,42 +1,26 @@
 # =============================================================================
 # Dockerfile.zts-build
-# Build the New Relic PHP agent with ZTS (Thread-Safe) support.
-# Intended for FrankenPHP and other thread-safe PHP runtimes.
+# Build only the New Relic PHP extension (newrelic.so) with ZTS support.
 #
-# STEP 1 — Build:
-#   docker build -f Dockerfile.zts-build -t newrelic-php-zts .
-#
-# STEP 2 — Extract the .so extension and daemon binary:
-#   docker create --name nr-extract newrelic-php-zts
-#   docker cp nr-extract:/usr/local/lib/php/extensions/no-debug-zts-20230831/newrelic.so .
-#   docker cp nr-extract:/usr/local/bin/newrelic-daemon .
-#   docker rm nr-extract
-#
-# STEP 3 — Copy both files into your own FrankenPHP image (see README).
-#
-# To target a different PHP version, change the FROM image tag below.
+# Run from the root of the merged agent source tree (see release.yaml):
+#   docker buildx build -f Dockerfile.zts-build --target package \
+#     --build-arg PHP_VERSION=8.4 --output type=local,dest=out .
 # =============================================================================
 
-ARG GO_VERSION=1.25.7
+ARG PHP_VERSION=8.4
+ARG PHP_IMAGE_SUFFIX=-zts-bookworm
 ARG PCRE_VERSION=8.45
-ARG PHP_IMAGE=dunglas/frankenphp:1-php8.3
 
-# --------------- Build stage ---------------
-FROM ${PHP_IMAGE} AS builder
+FROM php:${PHP_VERSION}${PHP_IMAGE_SUFFIX} AS builder
 
-ARG GO_VERSION
 ARG PCRE_VERSION
 
-# Install build dependencies.
-# Note: Debian Trixie+ no longer ships libpcre3-dev (PCRE1); the agent still
-# requires libpcre, so we build PCRE from source below and set PCRE_PREFIX.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    make bash git autoconf automake libtool pkg-config \
-    gcc g++ libprotobuf-c-dev protobuf-c-compiler \
-    libcurl4-openssl-dev \
+    autoconf automake bzip2 gcc libtool make pkg-config \
+    libprotobuf-c-dev protobuf-c-compiler \
     && rm -rf /var/lib/apt/lists/*
 
-# Build and install static libpcre (PCRE1) for PCRE_STATIC=yes agent builds.
+# The agent needs PCRE1, which Debian Trixie+ no longer ships; build it statically.
 RUN curl -fsSL "https://downloads.sourceforge.net/project/pcre/pcre/${PCRE_VERSION}/pcre-${PCRE_VERSION}.tar.bz2" \
     | tar -xj -C /tmp \
     && cd "/tmp/pcre-${PCRE_VERSION}" \
@@ -47,30 +31,15 @@ RUN curl -fsSL "https://downloads.sourceforge.net/project/pcre/pcre/${PCRE_VERSI
     && ln -sfn lib/libpcre.a /opt/pcre/libpcre.a \
     && rm -rf "/tmp/pcre-${PCRE_VERSION}"
 
-# config.m4 uses -L$prefix -l:libpcre.a (not lib/libpcre.a); keep a prefix-level symlink.
+# config.m4 links -L$PCRE_PREFIX -l:libpcre.a; axiom/Makefile calls pcre-config.
 ENV PCRE_PREFIX=/opt/pcre
-
-# axiom/Makefile uses `pcre-config --cflags`; keep it on PATH alongside Go.
-ENV PATH="/usr/local/go/bin:/opt/pcre/bin:${PATH}"
-
-# Install Go (the distro-provided version is too old for the daemon).
-# Architecture is detected automatically so the same Dockerfile works
-# on both amd64 and arm64.
-RUN ARCH=$(dpkg --print-architecture) \
-    && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
-       | tar -C /usr/local -xz
+ENV PATH="/opt/pcre/bin:${PATH}"
 
 WORKDIR /usr/src/newrelic-php-agent
 COPY . .
 
-# Build the daemon (Go) then the PHP extension (C).
-RUN make daemon OPTIMIZE=1
-RUN make agent OPTIMIZE=1 PCRE_STATIC=yes
-
-
-# --------------- Package stage ---------------
+RUN make agent -j"$(nproc)" OPTIMIZE=1 PCRE_STATIC=yes
 
 FROM scratch AS package
 
 COPY --from=builder /usr/src/newrelic-php-agent/agent/modules/newrelic.so /newrelic.so
-COPY --from=builder /usr/src/newrelic-php-agent/bin/daemon /newrelic-daemon
