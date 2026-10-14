@@ -1,0 +1,22 @@
+{
+    "name": "snebes/newrelic-zts",
+    "description": "Unofficial ZTS (thread-safe) build of the New Relic PHP agent extension for FrankenPHP and other ZTS PHP runtimes",
+    "type": "php-ext",
+    "license": "Apache-2.0",
+    "keywords": ["newrelic", "apm", "frankenphp", "zts", "extension"],
+    "homepage": "https://github.com/snebes/frankenphp-unofficial-newrelic",
+    "support": {
+        "issues": "https://github.com/snebes/frankenphp-unofficial-newrelic/issues",
+        "source": "https://github.com/snebes/frankenphp-unofficial-newrelic"
+    },
+    "require": {
+        "php": ">=8.2 <8.6"
+    },
+    "php-ext": {
+        "extension-name": "newrelic",
+        "support-nts": false,
+        "support-zts": true,
+        "os-families": ["linux"],
+        "download-url-method": ["pre-packaged-binary"]
+    }
+}
