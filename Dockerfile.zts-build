@@ -4,7 +4,8 @@
 #
 # Run from the root of the merged agent source tree (see release.yaml):
 #   docker buildx build -f Dockerfile.zts-build --target package \
-#     --build-arg PHP_VERSION=8.4 --output type=local,dest=out .
+#     --build-arg PHP_VERSION=8.4 --build-arg BUILD_NUMBER=40 \
+#     --output type=local,dest=out .
 # =============================================================================
 
 ARG PHP_VERSION=8.4
@@ -14,6 +15,7 @@ ARG PCRE_VERSION=8.45
 FROM php:${PHP_VERSION}${PHP_IMAGE_SUFFIX} AS builder
 
 ARG PCRE_VERSION
+ARG BUILD_NUMBER=0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf automake bzip2 gcc libtool make pkg-config \
@@ -38,7 +40,7 @@ ENV PATH="/opt/pcre/bin:${PATH}"
 WORKDIR /usr/src/newrelic-php-agent
 COPY . .
 
-RUN make agent -j"$(nproc)" OPTIMIZE=1 PCRE_STATIC=yes
+RUN make agent -j"$(nproc)" OPTIMIZE=1 PCRE_STATIC=yes BUILD_NUMBER="${BUILD_NUMBER}"
 
 FROM scratch AS package
 
