@@ -16,7 +16,7 @@ Thanks to Théophile for maintaining the ZTS work this project relies on.
 
 ## Installing with PIE
 
-Pre-built binaries are published for ZTS PHP 8.2–8.5 on Linux glibc (`x86_64`, `arm64`):
+Pre-built binaries are published for ZTS PHP 8.2+ on Linux glibc (`x86_64`, `arm64`):
 
 ```shell
 pie install snebes/newrelic-zts
@@ -35,11 +35,23 @@ docker build . -f /path/to/Dockerfile.zts-build --target package \
   --build-arg PHP_VERSION=8.4 --output type=local,dest=out
 ```
 
+## CI
+
+[`ci.yaml`](.github/workflows/ci.yaml) runs on pull requests and pushes to `main`. It validates `composer.json` and runs the same [`build.yaml`](.github/workflows/build.yaml) used for releases against a pinned agent version that is known to merge cleanly. Each PHP version × architecture is built, checked to link only libc, and smoke-tested in `dunglas/frankenphp:1-php<X.Y>` with concurrent requests ([`smoke-test.sh`](.github/scripts/smoke-test.sh)). Require the **CI gate** check in branch protection.
+
 ## Publishing a release
 
 1. Create and publish a GitHub release tagged with a New Relic agent version (e.g. `v12.11.0`, or the exact upstream tag `v12.11.0.40`).
 2. [`release.yaml`](.github/workflows/release.yaml) merges that upstream tag into `zts-support` (failing on merge conflicts), builds each PHP version × architecture, and attaches assets named `php_newrelic-<tag>_php<X.Y>-<arch>-linux-glibc-zts.zip`. It can be re-run for an existing tag via manual dispatch.
 3. Packagist picks up the new tag automatically once the repository is [submitted](https://packagist.org/packages/submit) and the GitHub hook is enabled.
+
+Each release also gets a `build-info.json` recording the exact fork commit and upstream tag it was built from.
+
+## Adding a new PHP version to existing releases
+
+When a new PHP minor version ships, run [`backfill.yaml`](.github/workflows/backfill.yaml) manually with the PHP version (e.g. `8.6`) and either specific release tags or `all`. For each release it rebuilds only that PHP version from the sources in its `build-info.json`, smoke-tests it, and uploads the new assets alongside the existing ones. Releases whose agent code does not compile against the new PHP version fail individually; the rest are still published. Use the `-rc` image variant to try a release candidate before the final PHP release (FrankenPHP images usually lag, so only a CLI load check runs until `dunglas/frankenphp:1-php<X.Y>` exists).
+
+Also add the new version to the default `php-versions` list in [`build.yaml`](.github/workflows/build.yaml) so future releases include it.
 
 ## License
 

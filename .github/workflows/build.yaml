@@ -1,0 +1,221 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      agent-version:
+        description: New Relic agent tag to merge into the ZTS fork (e.g. v12.6.0 or v12.6.0.34)
+        required: true
+        type: string
+      asset-version:
+        description: Version used in the PIE asset file names (the release tag)
+        required: true
+        type: string
+      php-versions:
+        description: JSON list of PHP minor versions to build
+        required: false
+        type: string
+        default: '["8.2", "8.3", "8.4", "8.5"]'
+      php-image-variant:
+        description: Suffix after the PHP version in the official image tag (e.g. -rc for release candidates)
+        required: false
+        type: string
+        default: ''
+      pin-from-release:
+        description: Rebuild from the fork commit and upstream tag recorded in the release's build-info.json
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  agent-repo: theophileds/newrelic-php-agent-zts
+  agent-ref: zts-support
+  upstream-repo: newrelic/newrelic-php-agent
+  artifact-name: newrelic-php-agent-src-${{ inputs.asset-version }}
+  extension-name: newrelic
+
+jobs:
+  prepare:
+    name: Merge upstream ${{ inputs.agent-version }}
+    runs-on: ubuntu-latest
+    outputs:
+      build-number: ${{ steps.merge.outputs.build-number }}
+      version: ${{ steps.merge.outputs.version }}
+    steps:
+      - name: Resolve agent sources
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PIN: ${{ inputs.pin-from-release }}
+          RELEASE: ${{ inputs.asset-version }}
+        run: |
+          set -euo pipefail
+          if [[ "${PIN}" == "true" ]]; then
+            if ! gh release download "${RELEASE}" --pattern build-info.json --repo "${{ github.repository }}"; then
+              echo "::error::Release ${RELEASE} has no build-info.json; cannot reproduce its sources"
+              exit 1
+            fi
+            cat build-info.json
+            sha="$(jq -er .agent_sha build-info.json)"
+            upstream_tag="$(jq -er .upstream_tag build-info.json)"
+          else
+            sha="$(git ls-remote "https://github.com/${{ env.agent-repo }}.git" "refs/heads/${{ env.agent-ref }}" | cut -f1)"
+            upstream_tag="${{ inputs.agent-version }}"
+          fi
+          test -n "${sha}"
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+          echo "upstream-tag=${upstream_tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout agent source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.agent-repo }}
+          ref: ${{ steps.resolve.outputs.sha }}
+          path: agent-src
+          fetch-depth: 0
+
+      - name: Merge upstream tag
+        id: merge
+        working-directory: agent-src
+        env:
+          TAG: ${{ steps.resolve.outputs.upstream-tag }}
+          AGENT_SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${{ env.upstream-repo }}.git"
+          # Separate namespace so upstream tags cannot clash with the fork's own tags.
+          git fetch --quiet --no-tags upstream '+refs/tags/*:refs/upstream-tags/*'
+
+          # Upstream tags are vMAJOR.MINOR.PATCH.BUILD; accept that exactly, or the
+          # three-part version and pick its newest build.
+          if git show-ref -q --verify "refs/upstream-tags/${TAG}"; then
+            upstream_tag="${TAG}"
+          else
+            upstream_tag="$(git for-each-ref --sort=-v:refname --format='%(refname:strip=2)' \
+              "refs/upstream-tags/${TAG}.*" | head -n1)"
+          fi
+          if [[ -z "${upstream_tag}" ]]; then
+            echo "::error::No ${{ env.upstream-repo }} tag matches ${TAG}"
+            exit 1
+          fi
+          echo "Merging ${{ env.upstream-repo }} ${upstream_tag} into ${{ env.agent-repo }}@${AGENT_SHA:0:12}"
+
+          if ! git merge --no-edit "refs/upstream-tags/${upstream_tag}"; then
+            echo "::error::Merge conflicts merging ${upstream_tag} into ${{ env.agent-ref }}:"
+            git diff --name-only --diff-filter=U | sed 's/^/  /'
+            exit 1
+          fi
+
+          build_number="${upstream_tag##*.}"
+          version="$(cat VERSION).${build_number}"
+          echo "Agent version: ${version}"
+          echo "build-number=${build_number}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+          mkdir -p "${RUNNER_TEMP}/build-info"
+          jq -n \
+            --arg agent_repo "${{ env.agent-repo }}" \
+            --arg agent_ref "${{ env.agent-ref }}" \
+            --arg agent_sha "${AGENT_SHA}" \
+            --arg upstream_repo "${{ env.upstream-repo }}" \
+            --arg upstream_tag "${upstream_tag}" \
+            --arg version "${version}" \
+            '$ARGS.named' > "${RUNNER_TEMP}/build-info/build-info.json"
+
+      - name: Upload merged agent source
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact-name }}
+          path: agent-src
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Upload build info
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-info-${{ inputs.asset-version }}
+          path: ${{ runner.temp }}/build-info/build-info.json
+          if-no-files-found: error
+
+  build:
+    name: "PHP ${{ matrix.php-version }} ${{ matrix.arch }}"
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ${{ fromJSON(inputs.php-versions) }}
+        arch: [ x86_64, arm64 ]
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download merged agent source
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.artifact-name }}
+          path: agent-src
+
+      - name: Build newrelic.so
+        run: |
+          docker build agent-src \
+            -f Dockerfile.zts-build \
+            --target package \
+            --build-arg PHP_VERSION=${{ matrix.php-version }} \
+            --build-arg PHP_IMAGE_SUFFIX=${{ inputs.php-image-variant }}-zts-bookworm \
+            --build-arg BUILD_NUMBER=${{ needs.prepare.outputs.build-number }} \
+            --output type=local,dest=out
+
+      - name: Check linked libraries
+        run: |
+          set -euo pipefail
+          readelf -d out/newrelic.so | grep NEEDED
+          unexpected="$(readelf -d out/newrelic.so | grep NEEDED \
+            | grep -Ev '\[(libc|libm|libdl|libpthread|librt)\.so\.[0-9]+\]|\[ld-linux[^]]*\]' || true)"
+          if [[ -n "${unexpected}" ]]; then
+            echo "::error::newrelic.so links libraries that may be missing on user systems:"
+            echo "${unexpected}"
+            exit 1
+          fi
+
+      - name: Smoke test in FrankenPHP
+        env:
+          FALLBACK_IMAGE: php:${{ matrix.php-version }}${{ inputs.php-image-variant }}-zts-bookworm
+        run: bash .github/scripts/smoke-test.sh out/newrelic.so ${{ matrix.php-version }} ${{ needs.prepare.outputs.version }}
+
+      - name: Package
+        id: package
+        env:
+          EXT: ${{ env.extension-name }}
+          TAG: ${{ inputs.asset-version }}
+          PHP_VERSION: ${{ matrix.php-version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          mkdir staging
+          cp out/newrelic.so "staging/${EXT}.so"
+          cp agent-src/LICENSE agent-src/THIRD_PARTY_NOTICES.md staging/
+
+          # Asset name format required by PIE's pre-packaged-binary download method.
+          asset="php_${EXT}-${TAG}_php${PHP_VERSION}-${ARCH}-linux-glibc-zts"
+          (cd staging && zip -9 -r "../${asset}.zip" .)
+          echo "asset=${asset}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.asset }}
+          path: ${{ steps.package.outputs.asset }}.zip
+          if-no-files-found: error
