@@ -37,8 +37,8 @@ docker build . -f /path/to/Dockerfile.zts-build --target package \
 
 ## Publishing a release
 
-1. Create and publish a GitHub release (e.g. tag `v1.0.0`).
-2. [`release.yaml`](.github/workflows/release.yaml) builds each PHP version × architecture from the current `zts-support` commit and attaches assets named `php_newrelic-<tag>_php<X.Y>-<arch>-linux-glibc-zts.zip`. It can be re-run for an existing tag via manual dispatch.
+1. Create and publish a GitHub release tagged with a New Relic agent version (e.g. `v12.11.0`, or the exact upstream tag `v12.11.0.40`).
+2. [`release.yaml`](.github/workflows/release.yaml) merges that upstream tag into `zts-support` (failing on merge conflicts), builds each PHP version × architecture, and attaches assets named `php_newrelic-<tag>_php<X.Y>-<arch>-linux-glibc-zts.zip`. It can be re-run for an existing tag via manual dispatch.
 3. Packagist picks up the new tag automatically once the repository is [submitted](https://packagist.org/packages/submit) and the GitHub hook is enabled.
 
 ## License
