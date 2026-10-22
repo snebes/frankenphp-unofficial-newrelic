@@ -10,7 +10,9 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -40,6 +42,14 @@ jobs:
           pattern: build-info-*
           merge-multiple: true
           path: dist
+
+      - name: Generate checksums
+        run: cd dist && sha256sum *.zip > SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/*.zip
 
       - name: Upload to release
         env:
