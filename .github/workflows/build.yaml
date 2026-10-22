@@ -129,7 +129,7 @@ jobs:
             '$ARGS.named' > "${RUNNER_TEMP}/build-info/build-info.json"
 
       - name: Upload merged agent source
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.artifact-name }}
           path: agent-src
@@ -137,7 +137,7 @@ jobs:
           retention-days: 2
 
       - name: Upload build info
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-info-${{ inputs.asset-version }}
           path: ${{ runner.temp }}/build-info/build-info.json
@@ -214,7 +214,7 @@ jobs:
           echo "asset=${asset}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.asset }}
           path: ${{ steps.package.outputs.asset }}.zip
