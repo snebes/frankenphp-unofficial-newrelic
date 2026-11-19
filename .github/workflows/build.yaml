@@ -15,7 +15,7 @@ on:
         description: JSON list of PHP minor versions to build
         required: false
         type: string
-        default: '["8.2", "8.3", "8.4", "8.5"]'
+        default: '["8.2", "8.3", "8.4", "8.5", "8.6"]'
       php-image-variant:
         description: Suffix after the PHP version in the official image tag (e.g. -rc for release candidates)
         required: false
@@ -167,13 +167,30 @@ jobs:
           name: ${{ env.artifact-name }}
           path: agent-src
 
+      - name: Resolve base image
+        id: base
+        env:
+          PHP_VERSION: ${{ matrix.php-version }}
+          VARIANT: ${{ inputs.php-image-variant }}
+        run: |
+          set -euo pipefail
+          if [[ "${PHP_VERSION}" == "8.2" ]]; then
+            # serversideup/php has no frankenphp variation for PHP 8.2.
+            image="php:${PHP_VERSION}${VARIANT}-zts-bookworm"
+            fallback="${image}"
+          else
+            image="serversideup/php:${PHP_VERSION}${VARIANT}-frankenphp-trixie"
+            fallback="php:${PHP_VERSION}${VARIANT}-zts-bookworm"
+          fi
+          echo "image=${image}" >> "${GITHUB_OUTPUT}"
+          echo "fallback=${fallback}" >> "${GITHUB_OUTPUT}"
+
       - name: Build newrelic.so
         run: |
           docker build agent-src \
             -f Dockerfile.zts-build \
             --target package \
-            --build-arg PHP_VERSION=${{ matrix.php-version }} \
-            --build-arg PHP_IMAGE_SUFFIX=${{ inputs.php-image-variant }} \
+            --build-arg BASE_IMAGE=${{ steps.base.outputs.image }} \
             --build-arg BUILD_NUMBER=${{ needs.prepare.outputs.build-number }} \
             --output type=local,dest=out
 
@@ -191,7 +208,7 @@ jobs:
 
       - name: Smoke test in FrankenPHP
         env:
-          FALLBACK_IMAGE: php:${{ matrix.php-version }}${{ inputs.php-image-variant }}-zts-bookworm
+          FALLBACK_IMAGE: ${{ steps.base.outputs.fallback }}
         run: bash .github/scripts/smoke-test.sh out/newrelic.so ${{ matrix.php-version }} ${{ needs.prepare.outputs.version }}
 
       - name: Package

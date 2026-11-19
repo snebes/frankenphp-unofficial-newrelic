@@ -4,17 +4,18 @@
 #
 # Run from the root of the merged agent source tree (see release.yaml):
 #   docker buildx build -f Dockerfile.zts-build --target package \
-#     --build-arg PHP_VERSION=8.4 --build-arg BUILD_NUMBER=40 \
-#     --output type=local,dest=out .
+#     --build-arg BASE_IMAGE=serversideup/php:8.4-frankenphp-trixie \
+#     --build-arg BUILD_NUMBER=40 --output type=local,dest=out .
+#
+# BASE_IMAGE must be a ZTS PHP image. build.yaml uses
+# serversideup/php:<X.Y>[-rc]-frankenphp-trixie, except PHP 8.2 (not published
+# by serversideup for frankenphp), which uses php:8.2-zts-bookworm.
 # =============================================================================
 
-ARG PHP_VERSION=8.4
-ARG PHP_IMAGE_SUFFIX=
+ARG BASE_IMAGE=serversideup/php:8.4-frankenphp-trixie
 ARG PCRE_VERSION=8.45
 
-# serversideup/php's frankenphp variation is built on a ZTS PHP (Debian Trixie).
-# PHP_IMAGE_SUFFIX is e.g. "-rc" for release candidates (tag: 8.6-rc-frankenphp-trixie).
-FROM serversideup/php:${PHP_VERSION}${PHP_IMAGE_SUFFIX}-frankenphp-trixie AS builder
+FROM ${BASE_IMAGE} AS builder
 
 ARG PCRE_VERSION
 ARG BUILD_NUMBER=0
