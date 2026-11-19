@@ -26,7 +26,7 @@ PIE only installs `newrelic.so`; it cannot build this extension from source. The
 
 ## How it is built
 
-[`Dockerfile.zts-build`](Dockerfile.zts-build) compiles `newrelic.so` inside the official `php:<X.Y>-zts-bookworm` image (the same base FrankenPHP uses), with PCRE linked statically. The resulting extension only depends on libc.
+[`Dockerfile.zts-build`](Dockerfile.zts-build) compiles `newrelic.so` inside the [`serversideup/php:<X.Y>-frankenphp-trixie`](https://serversideup.net/open-source/docker-php/docs/getting-started/these-images-vs-others) image (a ZTS PHP built on the official PHP sources), with PCRE linked statically. The resulting extension only depends on libc.
 
 To build locally, run from a checkout of the agent fork:
 

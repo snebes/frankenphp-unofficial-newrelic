@@ -9,13 +9,18 @@
 # =============================================================================
 
 ARG PHP_VERSION=8.4
-ARG PHP_IMAGE_SUFFIX=-zts-bookworm
+ARG PHP_IMAGE_SUFFIX=
 ARG PCRE_VERSION=8.45
 
-FROM php:${PHP_VERSION}${PHP_IMAGE_SUFFIX} AS builder
+# serversideup/php's frankenphp variation is built on a ZTS PHP (Debian Trixie).
+# PHP_IMAGE_SUFFIX is e.g. "-rc" for release candidates (tag: 8.6-rc-frankenphp-trixie).
+FROM serversideup/php:${PHP_VERSION}${PHP_IMAGE_SUFFIX}-frankenphp-trixie AS builder
 
 ARG PCRE_VERSION
 ARG BUILD_NUMBER=0
+
+# serversideup images run as www-data by default; the build needs root.
+USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf automake bzip2 gcc libtool make pkg-config \

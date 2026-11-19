@@ -173,7 +173,7 @@ jobs:
             -f Dockerfile.zts-build \
             --target package \
             --build-arg PHP_VERSION=${{ matrix.php-version }} \
-            --build-arg PHP_IMAGE_SUFFIX=${{ inputs.php-image-variant }}-zts-bookworm \
+            --build-arg PHP_IMAGE_SUFFIX=${{ inputs.php-image-variant }} \
             --build-arg BUILD_NUMBER=${{ needs.prepare.outputs.build-number }} \
             --output type=local,dest=out
 
