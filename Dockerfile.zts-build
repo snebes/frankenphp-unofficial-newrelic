@@ -46,6 +46,11 @@ ENV PATH="/opt/pcre/bin:${PATH}"
 WORKDIR /usr/src/newrelic-php-agent
 COPY . .
 
+# PHP 8.6 made zend_ini_string() return const char*; the agent wrapper returns char*.
+# The cast is a no-op on older PHP versions.
+RUN sed -i 's|return zend_ini_string(name, name_len, orig);|return (char*)zend_ini_string(name, name_len, orig);|' agent/php_agent.h \
+    && grep -q '(char\*)zend_ini_string' agent/php_agent.h
+
 RUN make agent -j"$(nproc)" OPTIMIZE=1 PCRE_STATIC=yes BUILD_NUMBER="${BUILD_NUMBER}"
 
 FROM scratch AS package
