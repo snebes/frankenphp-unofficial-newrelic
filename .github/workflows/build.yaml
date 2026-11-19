@@ -208,6 +208,7 @@ jobs:
 
       - name: Smoke test in FrankenPHP
         env:
+          SERVERSIDEUP_IMAGE: ${{ steps.base.outputs.image }}
           FALLBACK_IMAGE: ${{ steps.base.outputs.fallback }}
         run: bash .github/scripts/smoke-test.sh out/newrelic.so ${{ matrix.php-version }} ${{ needs.prepare.outputs.version }}
 

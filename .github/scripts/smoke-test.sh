@@ -4,8 +4,10 @@
 # Usage: smoke-test.sh <path/to/newrelic.so> <php-version> <expected-agent-version>
 #   e.g. smoke-test.sh out/newrelic.so 8.4 12.6.0.34
 #
-# If no FrankenPHP image exists for the PHP version yet and FALLBACK_IMAGE is set
-# (e.g. php:8.6-rc-zts-bookworm), only a CLI load check is run in that image.
+# If no dunglas/frankenphp image exists for the PHP version yet, the full test is run
+# in SERVERSIDEUP_IMAGE (e.g. serversideup/php:8.6-rc-frankenphp-trixie) when set.
+# If that is unavailable too and FALLBACK_IMAGE is set, only a CLI load check is run
+# in that image.
 set -euo pipefail
 
 so="$1"
@@ -13,6 +15,10 @@ php_version="$2"
 expected="$3"
 
 image="dunglas/frankenphp:1-php${php_version}"
+# Per-image settings; overridden below when falling back to serversideup/php.
+container_port=80
+docroot=/app/public
+container_env=(-e SERVER_NAME=:80 -e FRANKENPHP_CONFIG="num_threads 16")
 name="nr-smoke-${php_version}-$$"
 port="${SMOKE_PORT:-18080}"
 requests="${SMOKE_REQUESTS:-400}"
@@ -60,7 +66,21 @@ newrelic_add_custom_parameter('sum', $sum);
 echo 'newrelic=', phpversion('newrelic'), "\n";
 EOF
 
-if ! docker pull --quiet "${image}" >/dev/null 2>&1; then
+available=0
+if docker pull --quiet "${image}" >/dev/null 2>&1; then
+  available=1
+elif [[ "${SERVERSIDEUP_IMAGE:-}" == serversideup/* ]]; then
+  echo "::warning::${image} is not available; trying ${SERVERSIDEUP_IMAGE}"
+  image="${SERVERSIDEUP_IMAGE}"
+  container_port=8080
+  docroot=/var/www/html/public
+  container_env=(-e FRANKENPHP_CONFIG="num_threads 16")
+  if docker pull --quiet "${image}" >/dev/null 2>&1; then
+    available=1
+  fi
+fi
+
+if [[ "${available}" -eq 0 ]]; then
   [[ -n "${FALLBACK_IMAGE:-}" ]] || fail "${image} is not available"
   echo "::warning::${image} is not available; only checking that the extension loads in ${FALLBACK_IMAGE}"
   docker create --name "${name}" "${FALLBACK_IMAGE}" \
@@ -73,11 +93,11 @@ if ! docker pull --quiet "${image}" >/dev/null 2>&1; then
   exit 0
 fi
 
-docker create --name "${name}" -p "127.0.0.1:${port}:80" \
-  -e SERVER_NAME=:80 -e FRANKENPHP_CONFIG="num_threads 16" "${image}" >/dev/null
+docker create --name "${name}" -p "127.0.0.1:${port}:${container_port}" \
+  "${container_env[@]}" "${image}" >/dev/null
 docker cp "${so}" "${name}:/opt/newrelic.so"
 docker cp "${workdir}/newrelic.ini" "${name}:/usr/local/etc/php/conf.d/zz-newrelic.ini"
-docker cp "${workdir}/index.php" "${name}:/app/public/index.php"
+docker cp "${workdir}/index.php" "${name}:${docroot}/index.php"
 docker start "${name}" >/dev/null
 
 echo "--- CLI load"
