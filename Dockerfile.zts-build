@@ -4,18 +4,24 @@
 #
 # Run from the root of the merged agent source tree (see release.yaml):
 #   docker buildx build -f Dockerfile.zts-build --target package \
-#     --build-arg PHP_VERSION=8.4 --build-arg BUILD_NUMBER=40 \
-#     --output type=local,dest=out .
+#     --build-arg BASE_IMAGE=serversideup/php:8.4-frankenphp-trixie \
+#     --build-arg BUILD_NUMBER=40 --output type=local,dest=out .
+#
+# BASE_IMAGE must be a ZTS PHP image. build.yaml uses
+# serversideup/php:<X.Y>[-rc]-frankenphp-trixie, except PHP 8.2 (not published
+# by serversideup for frankenphp), which uses php:8.2-zts-bookworm.
 # =============================================================================
 
-ARG PHP_VERSION=8.4
-ARG PHP_IMAGE_SUFFIX=-zts-bookworm
+ARG BASE_IMAGE=serversideup/php:8.4-frankenphp-trixie
 ARG PCRE_VERSION=8.45
 
-FROM php:${PHP_VERSION}${PHP_IMAGE_SUFFIX} AS builder
+FROM ${BASE_IMAGE} AS builder
 
 ARG PCRE_VERSION
 ARG BUILD_NUMBER=0
+
+# serversideup images run as www-data by default; the build needs root.
+USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf automake bzip2 gcc libtool make pkg-config \
@@ -39,6 +45,21 @@ ENV PATH="/opt/pcre/bin:${PATH}"
 
 WORKDIR /usr/src/newrelic-php-agent
 COPY . .
+
+# PHP 8.6 compatibility patches for the agent sources. All are no-ops (or
+# equivalent) on PHP 8.2-8.5; each grep fails the build if a patch did not apply.
+#  - zend_ini_string() now returns const char*; the agent wrapper returns char*.
+#  - zval_dtor() was removed; zval_ptr_dtor_nogc() is the equivalent.
+#  - php_verror() lost its docref/params arguments.
+#  - INI_BOOL() was removed.
+RUN set -eux; cd agent; \
+    sed -i 's|return zend_ini_string(name, name_len, orig);|return (char*)zend_ini_string(name, name_len, orig);|' php_agent.h; \
+    grep -q '(char\*)zend_ini_string' php_agent.h; \
+    sed -i -E 's/(^|[^A-Za-z0-9_])zval_dtor\(/\1zval_ptr_dtor_nogc(/g' *.c; \
+    ! grep -En '(^|[^A-Za-z0-9_])zval_dtor\(' *.c; \
+    sed -i 's|^  php_verror(docref, params, E_WARNING, format, args TSRMLS_CC);|#if PHP_VERSION_ID >= 80600\n  php_verror(docref, E_WARNING, format, args);\n#else\n  php_verror(docref, params, E_WARNING, format, args TSRMLS_CC);\n#endif|' php_api.c; \
+    grep -q 'PHP_VERSION_ID >= 80600' php_api.c; \
+    printf '\n#ifndef INI_BOOL\n#define INI_BOOL(name) ((bool)zend_ini_long((name), sizeof(name) - 1, 0))\n#endif\n' >> php_agent.h
 
 RUN make agent -j"$(nproc)" OPTIMIZE=1 PCRE_STATIC=yes BUILD_NUMBER="${BUILD_NUMBER}"
 
